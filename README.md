@@ -44,9 +44,8 @@ cd agent-examples
 2. Create and activate a virtual environment:
 ```bash
 make venv-create
-make venv-activate
-# or for fish
-make venv-activate-fish
+source .venv/bin/activate
+source .venv/bin/activate.fish  # For fish shell
 ```
 
 3. Install dependencies:

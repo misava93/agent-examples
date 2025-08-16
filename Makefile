@@ -3,16 +3,6 @@ venv-create:
 	@echo "Creating virtual environment"
 	python -m venv .venv
 
-.PHONY: venv-activate-fish
-venv-activate-fish:
-	@echo "Activating virtual environment"
-	source .venv/bin/activate.fish
-
-.PHONY: venv-activate
-venv-activate:
-	@echo "Activating virtual environment"
-	source .venv/bin/activate
-
 .PHONY: install-deps
 install-deps:
 	@echo "Installing dependencies"
