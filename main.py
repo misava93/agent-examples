@@ -2,9 +2,9 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 app = FastAPI(
-    title="Buggy API",
+    title="Sample API",
     version="1.0.0",
-    description="Example API with a bug",
+    description="Example API",
     servers=[
         {
             "url": "http://localhost:8086",

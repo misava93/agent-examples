@@ -31,9 +31,14 @@ test:
 .PHONY: start-dev
 api-start-dev:
 	@echo "Starting API in development mode"
-	fastapi dev --port 8085 api.py
+	fastapi dev --port 8085 main.py
 
 .PHONY: start-prod
 api-start-prod:
 	@echo "Starting API in production mode"
-	fastapi run --port 8085 api.py
+	fastapi run --port 8085 main.py
+
+.PHONY: run-ticket-bug-fixer-agent
+run-ticket-bug-fixer:
+	@echo "Running ticket bug fixer"
+	python agents/ticket-bug-fixer.py
