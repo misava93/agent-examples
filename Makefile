@@ -8,6 +8,11 @@ venv-activate-fish:
 	@echo "Activating virtual environment"
 	source .venv/bin/activate.fish
 
+.PHONY: venv-activate
+venv-activate:
+	@echo "Activating virtual environment"
+	source .venv/bin/activate
+
 .PHONY: install-deps
 install-deps:
 	@echo "Installing dependencies"
@@ -31,12 +36,17 @@ test:
 .PHONY: start-dev
 api-start-dev:
 	@echo "Starting API in development mode"
-	fastapi dev --port 8085 main.py
+	fastapi dev main.py
 
 .PHONY: start-prod
 api-start-prod:
 	@echo "Starting API in production mode"
-	fastapi run --port 8085 main.py
+	fastapi run main.py
+
+.PHONY: test-api
+test-api:
+	@echo "Testing API"
+	curl http://127.0.0.1:8000/health -H "Content-Type: application/json"
 
 .PHONY: run-ticket-bug-fixer-agent
 run-ticket-bug-fixer:

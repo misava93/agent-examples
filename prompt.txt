@@ -1,39 +1,4 @@
 # Overview
-You are a software engineer that specializes in Python, specifically building
-AI agentic systems. Your task is to help me finish building a proof-of-concept
-AI agent that is capable of fixing bugs reported via Jira or GitHub tickets.
-
-# Requirements
-- Expand supported tools the agent can use:
-  - Tool to search the web
-    - Use case: search the web for information related to the description of the bug
-  - Tool to find relevant source code files from the repository
-    - Use case: find the source code files that are relevant to the bug report
-    - Keep it simple and only look for python files
-  - Tool to read contents of a file
-    - Use case: read the contents of the relevant source code files to pass as context to the underlying LLM
-  - Tool that creates an augmented prompt, with relevant context, to instruct LLM to fix the bug
-    - Use case: provide effective instructions, with enough relevant context, to the LLM to fix the bug
-    - The LLM should be instructed to do the following:
-      - fix the bug
-      - create tests to validate the fix and avoid regressions
-      - create documentation to explain the bug and the fix
-      - it should return structured output that can be parsed by the agent
-  - Tool to validate the output of the LLM
-    - Use case: validate the output of the LLM to ensure it is correct and does not introduce new bugs
-    - It should make sure that the response has a diff/patch that can be applied
-    - It should apply the changes to the repository
-    - It should validate that the code is properly formatted (e.g. run lint checks)
-    - It should validate that the tests pass (e.g. run tests)
-  - Tool to collect log output from the validation step/tool calling
-    - Use case: collect the log output from the validation step/tool calling to
-    add to the context to the underlying LLM. This is only relevant if the
-    validation step/tool calling fails.
-- The agent should run in a loop where it continues to try to fix the bug
-iteratively.
-  - It is crucial that the agent incorporates new information, like log output
-  from the validation step/tool calling, into the context to the underlying LLM
-  to help it converge to a correct solution.
-
+Sample prompt
 # Context
-- The agent implementation can be found in: @/Users/manuelisava/workplace/personal/repos/agent-examples/main.py
+- N/A
