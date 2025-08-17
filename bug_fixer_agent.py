@@ -19,7 +19,7 @@ def run_bug_fix_agent():
     ticket_id = ticket_id.strip()
     agent_config = AgentConfig(
         name="bug-fixer",
-        model="gpt-oss:20b",  # qwen3:8b
+        model="qwen3:8b",  # gpt-oss:20b
         tools={
             "researcher_agent": ResearchAgentTool(),
             "planner_agent": PlannerAgentTool(),

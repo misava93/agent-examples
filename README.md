@@ -96,7 +96,7 @@ The Makefile provides several useful commands:
 - `make api-start-dev` - Start API in development mode
 - `make api-start-prod` - Start API in production mode
 - `make test-api` - Test the API health endpoint
-- `make run-ticket-bug-fixer` - Run the bug fixing agent
+- `make run-bug-fixer-agent` - Run the bug fixing agent
 
 ## How It Works
 

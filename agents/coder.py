@@ -11,6 +11,7 @@ from agents.tools import (
     TestCodeTool,
     TestCodeToolResult,
     Tool,
+    EditFileToolResult,
 )
 
 
@@ -61,6 +62,10 @@ class CoderAgent(Agent):
                     description="Coder agent should not call itself recursively.",
                 )
                 return None, error
+
+            if tool_call.name == "edit_file":
+                edit_file_result = EditFileToolResult(**tool_call.response)
+                self.context.code_changes.append(edit_file_result.file)
 
             # check if a test_code tool call was made
             # and update the context if found
