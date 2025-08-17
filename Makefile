@@ -38,7 +38,7 @@ test-api:
 	@echo "Testing API"
 	curl http://127.0.0.1:8000/health -H "Content-Type: application/json"
 
-.PHONY: run-ticket-bug-fixer-agent
-run-ticket-bug-fixer:
-	@echo "Running ticket bug fixer"
-	python agents/ticket-bug-fixer.py
+.PHONY: run-bug-fixer-agent
+run-bug-fixer-agent:
+	@echo "Running bug fixer agent"
+	python bug_fixer_agent.py

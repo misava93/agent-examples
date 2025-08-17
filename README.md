@@ -65,7 +65,7 @@ ollama pull gpt-oss:20b
 The ticket bug fixer agent demonstrates how AI can automatically fix bugs based on ticket descriptions:
 
 ```bash
-make run-ticket-bug-fixer
+make run-bug-fixer-agent
 ```
 
 When prompted, provide a ticket ID (any string). The agent will:
