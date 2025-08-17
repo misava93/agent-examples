@@ -1,61 +1,105 @@
 from typing import Callable
-from agents.agent import Agent, AgentConfig, AgentOutput, Context, LLMResponse
-from agents.tools import Error, File, SearchWebToolResult, Tool
+from agents.agent import (
+    Agent,
+    AgentConfig,
+    AgentOutput,
+    Context,
+    LLMResponse,
+    ResearchOutput,
+)
+from agents.tools import (
+    Error,
+    File,
+    SearchWebToolResult,
+    Tool,
+    ReadFileToolResult,
+    Ticket,
+    GetTicketToolResult,
+)
 
 
 class ResearchContext(Context):
+    ticket: Ticket | None = None
     files: list[File] = []
     web_search_results: list[SearchWebToolResult] = []
 
-class ResearchOutput(AgentOutput):
-    files: list[File]
-    web_search_results: list[str]
 
 class ResearchAgent(Agent):
     name: str = "researcher_agent"
-    specific_context: ResearchContext = ResearchContext()
-    
+    context: ResearchContext = ResearchContext()
+
     def is_done(self):
-        # TODO: figure out a better way to determine if the agent is done
         if self.context.num_iterations >= self.config.max_iterations:
+            return True
+        # TODO: figure out a way to determine whether agent has read all relevant files
+        #  available in the repository.
+        # We use 5 as a minimum number of iterations to ensure that the agent
+        # has had a chance to gather some information.
+        if (
+            self.context.ticket
+            and self.context.files
+            and self.context.num_iterations >= 5
+        ):
             return True
         return False
 
     def get_output(self) -> ResearchOutput:
         return ResearchOutput(
-            files=self.specific_context.files,
-            web_search_results=self.specific_context.web_search_results,
+            ticket=self.context.ticket,
+            files=self.context.files,
+            web_search_results=self.context.web_search_results,
         )
 
-    def step(self) -> tuple[LLMResponse, Error | None]:
+    def step(self) -> tuple[LLMResponse | None, Error | None]:
         prompt = self.build_prompt(self.config.task_description)
         response, error = self._invoke_llm(prompt)
         self._update_common_context(response, error)
-    
+
         if error is not None:
             return response, error
-        
-        # check if a read_file tool call was made
-        # and update the context if found
+
         for tool_call in response.tool_calls:
+            if tool_call.name == "researcher_agent":
+                # make sure that agent does not call itself recursively
+                error = Error(
+                    description="Research agent should not call itself recursively.",
+                )
+                return None, error
+            if tool_call.name == "get_ticket":
+                get_ticket_result = GetTicketToolResult(**tool_call.response)
+                self.context.ticket = get_ticket_result.ticket
             if tool_call.name == "read_file":
+                read_file_result = ReadFileToolResult(**tool_call.response)
                 file = File(
-                    path=tool_call.arguments["file_path"],
-                    content=tool_call.arguments["content"],
+                    path=read_file_result.file_path,
+                    content=read_file_result.content,
                 )
-                self.specific_context.files.append(file)
-        
-        # check if a search_web tool call was made
-        # and update the context if found
-        for tool_call in response.tool_calls:
+                self.context.files.append(file)
+
             if tool_call.name == "search_web":
-                search_result = SearchWebToolResult(
-                    results=tool_call.arguments["results"],
-                    query=tool_call.arguments["query"],
-                )
-                self.specific_context.web_search_results.append(search_result)
-        
+                search_result = SearchWebToolResult(**tool_call.response)
+                self.context.web_search_results.append(search_result)
+
         return response, None
+
+    def validate_llm_response(self, llm_response: LLMResponse) -> Error | None:
+        error = super().validate_llm_response(llm_response)
+
+        # try to nudge the agent to use a tool if it decides to not use any tools
+        if not llm_response.tool_calls:
+            tools_to_use = []
+            if not self.context.ticket:
+                tools_to_use.append("get_ticket")
+            if not self.context.files:
+                tools_to_use += ["find_files", "read_file"]
+            if not self.context.web_search_results:
+                tools_to_use.append("search_web")
+
+            error = Error(
+                description=f"You decided not to use any tools. Please use the available tools at least once to gather information.",
+                data={"available_tools": tools_to_use},
+            )
+        return error
 
     def build_prompt(self, task_description: str) -> str:
         return f"""
@@ -100,12 +144,10 @@ Make sure to use the following tools to gather information:
     }}  
     ```
 
-# Common Context
-{self.context.model_dump_json()}
-
-# Specific Context
-{self.specific_context.model_dump_json()}
+# Context
+{self.context.model_dump_json(indent=2)}
 """
+
 
 class ResearchAgentTool(Tool):
     name: str = "researcher_agent"
@@ -115,7 +157,7 @@ class ResearchAgentTool(Tool):
         agent.start()
         return agent.get_output()
 
-    def get_schema(self) -> str|Callable:
+    def get_schema(self) -> str | Callable:
         def researcher_agent(task_description: str) -> ResearchOutput:
             """
             Use this tool to use an agent to research the task and gather more information.
@@ -126,6 +168,5 @@ class ResearchAgentTool(Tool):
                 ResearchOutput: The output of the research agent.
             """
             pass
-        return researcher_agent
 
-   
+        return researcher_agent

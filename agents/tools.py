@@ -18,9 +18,11 @@ tools_available = [
     "format_code",
 ]
 
+
 class Error(BaseModel):
     description: str = ""
     data: Any = None
+
 
 class ToolCall(BaseModel):
     name: str = ""
@@ -30,29 +32,33 @@ class ToolCall(BaseModel):
     def __hash__(self):
         return hash((self.name, frozenset(self.arguments.items())))
 
+
 class ToolFunction(BaseModel):
     function: ToolCall
 
+
 class ToolResult(BaseModel):
-    error: Error | None = None
+    error: Error | str | None = None
+
 
 class Tool(ABC, BaseModel):
     name: str
 
     def get_name(self) -> str:
         return self.name
-    
+
     @abstractmethod
     def run(self) -> ToolResult:
         pass
 
     @abstractmethod
-    def get_schema(self) -> str|Callable:
+    def get_schema(self) -> str | Callable:
         pass
 
 
 class FindFilesToolResult(ToolResult):
     file_paths: list[str]
+
 
 class FindFilesTool(Tool):
     name: str = "find_files"
@@ -62,13 +68,19 @@ class FindFilesTool(Tool):
         for root, dirs, files in os.walk(directory):
             # Remove hidden directories from dirs list in-place
             # This prevents os.walk from descending into them
-            dirs[:] = [d for d in dirs if not d.startswith(".") and not d == "__pycache__" and d in allowed_dirs]
+            dirs[:] = [
+                d
+                for d in dirs
+                if not d.startswith(".")
+                and not d == "__pycache__"
+                and d in allowed_dirs
+            ]
             for file in files:
-                result.append(os.path.join(root, file))  
+                result.append(os.path.join(root, file))
 
         return FindFilesToolResult(file_paths=result)
 
-    def get_schema(self) -> str|Callable:
+    def get_schema(self) -> str | Callable:
         # Note: Ollama supports dynamic schema generation for tools based
         # on function signatures.
         def find_files(directory: str) -> FindFilesToolResult:
@@ -83,12 +95,14 @@ class FindFilesTool(Tool):
                 FindFilesToolResult: List of file paths found in the directory
             """
             pass
+
         return find_files
 
 
 class ReadFileToolResult(ToolResult):
     file_path: str = ""
     content: str = ""
+
 
 class ReadFileTool(Tool):
     name: str = "read_file"
@@ -101,9 +115,11 @@ class ReadFileTool(Tool):
         except FileNotFoundError:
             return ReadFileToolResult(error=f"File not found. file_path={file_path}")
         except Exception as e:
-            return ReadFileToolResult(error=f"Error reading file. file_path={file_path}, error={str(e)}")
+            return ReadFileToolResult(
+                error=f"Error reading file. file_path={file_path}, error={str(e)}"
+            )
 
-    def get_schema(self) -> str|Callable:
+    def get_schema(self) -> str | Callable:
         def read_file(file_path: str) -> ReadFileToolResult:
             """
             Reads the contents of a specific file.
@@ -116,12 +132,14 @@ class ReadFileTool(Tool):
                 ReadFileToolResult: The contents of the file
             """
             pass
+
         return read_file
 
 
 class SearchWebToolResult(ToolResult):
     query: str
     results: list[str] = []
+
 
 class SearchWebTool(Tool):
     name: str = "search_web"
@@ -131,7 +149,7 @@ class SearchWebTool(Tool):
         # In a real implementation, this would use a web search API
         return SearchWebToolResult(query=query, results=["No search results found"])
 
-    def get_schema(self) -> str|Callable:
+    def get_schema(self) -> str | Callable:
         def search_web(query: str) -> SearchWebToolResult:
             """
             Searches the web for additional information related to the provided query.
@@ -144,6 +162,7 @@ class SearchWebTool(Tool):
                 SearchWebToolResult: Search results from the web for the provided query
             """
             pass
+
         return search_web
 
 
@@ -156,27 +175,34 @@ class File(BaseModel):
 class EditFileToolResult(ToolResult):
     file: File | None = None
 
+
 class EditFileTool(Tool):
     name: str = "edit_file"
 
     def run(
-        self, 
-        file_path: str, 
-        content: str, 
-        current_file: File, 
-        allowed_dirs: list[str], 
-        disallowed_files: list[str]
-    ) -> EditFileToolResult:        
+        self,
+        file_path: str,
+        content: str,
+        current_file: File,
+        allowed_dirs: list[str],
+        disallowed_files: list[str],
+    ) -> EditFileToolResult:
         # only allow updating files inside the allowed directories
-        any_allowed_dir = any(file_path.startswith(allowed_dir) for allowed_dir in allowed_dirs)
+        any_allowed_dir = any(
+            file_path.startswith(allowed_dir) for allowed_dir in allowed_dirs
+        )
         if not any_allowed_dir:
-            return EditFileToolResult(error=f"Attempted to edit file outside of allowed directories. Context={{'file_path': '{file_path}', 'allowed_dirs': '{allowed_dirs}'}}")
+            return EditFileToolResult(
+                error=f"Attempted to edit file outside of allowed directories. Context={{'file_path': '{file_path}', 'allowed_dirs': '{allowed_dirs}'}}"
+            )
 
         path = Path(file_path)
         # do not allow editing files in disallowed list
         disallowed_files = set(disallowed_files)
         if path.name in disallowed_files:
-            return EditFileToolResult(error=f"Attempted to edit disallowed file. Context={{'file_path': '{file_path}'}}")
+            return EditFileToolResult(
+                error=f"Attempted to edit disallowed file. Context={{'file_path': '{file_path}'}}"
+            )
 
         file = File(path=file_path, content=content)
         diff = self.calculate_diff(current_file, file)
@@ -187,11 +213,13 @@ class EditFileTool(Tool):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
         except Exception as e:
-            return EditFileToolResult(error=f"Error saving file to disk. Context={{'file_path': '{file_path}', 'error': '{str(e)}'}}")
+            return EditFileToolResult(
+                error=f"Error saving file to disk. Context={{'file_path': '{file_path}', 'error': '{str(e)}'}}"
+            )
 
         return EditFileToolResult(file=file)
 
-    def get_schema(self) -> str|Callable:
+    def get_schema(self) -> str | Callable:
         def edit_file(file_path: str, content: str) -> EditFileToolResult:
             """
             Edits a file with the provided content. It overwrites the file.
@@ -209,8 +237,9 @@ class EditFileTool(Tool):
                 EditFileToolResult: Result that indicates whether the file was successfully edited.
             """
             pass
+
         return edit_file
-    
+
     def calculate_diff(self, file_1: File, file_2: File) -> str:
         """
         Calculates the diff between two files
@@ -231,6 +260,7 @@ class EditFileTool(Tool):
 
         return "".join(diff_result)
 
+
 class Ticket(BaseModel):
     id: str
     title: str = ""
@@ -240,6 +270,7 @@ class Ticket(BaseModel):
 
 class GetTicketToolResult(ToolResult):
     ticket: Ticket
+
 
 class GetTicketTool(Tool):
     name: str = "get_ticket"
@@ -258,8 +289,8 @@ class GetTicketTool(Tool):
                 repository=cwd,
             )
         )
-    
-    def get_schema(self) -> str|Callable:
+
+    def get_schema(self) -> str | Callable:
         def get_ticket(ticket_id: str) -> GetTicketToolResult:
             """
             Retrieves the ticket with the bug report
@@ -272,8 +303,9 @@ class GetTicketTool(Tool):
                 GetTicketToolResult: The ticket with additional information about the task
             """
             pass
+
         return get_ticket
-    
+
 
 class SubprocessResult(BaseModel):
     success: bool
@@ -358,6 +390,7 @@ def run_make_target(
 class TestCodeToolResult(ToolResult):
     error: Error | None = None
 
+
 class TestCodeTool(Tool):
     name: str = "test_code"
 
@@ -376,11 +409,11 @@ class TestCodeTool(Tool):
             return TestCodeToolResult(
                 error=Error(
                     description="An unexpected error occurred while testing code.",
-                    data=str(e)
+                    data=str(e),
                 )
             )
-    
-    def get_schema(self) -> str|Callable:
+
+    def get_schema(self) -> str | Callable:
         def test_code(root_dir: str) -> TestCodeToolResult:
             """
             Tests the code to ensure it is working as expected.
@@ -393,10 +426,13 @@ class TestCodeTool(Tool):
                 TestCodeToolResult: Result that indicates whether the code was successfully tested.
             """
             pass
+
         return test_code
+
 
 class LintCodeToolResult(ToolResult):
     error: Error | None = None
+
 
 class LintCodeTool(Tool):
     name: str = "lint_code"
@@ -416,11 +452,11 @@ class LintCodeTool(Tool):
             return LintCodeToolResult(
                 error=Error(
                     description="An unexpected error occurred while running the lint check.",
-                    data=str(e)
+                    data=str(e),
                 )
             )
 
-    def get_schema(self) -> str|Callable:
+    def get_schema(self) -> str | Callable:
         def lint_code(root_dir: str) -> LintCodeToolResult:
             """
             Runs the lint check on the source code
@@ -433,11 +469,13 @@ class LintCodeTool(Tool):
                 LintCodeToolResult: Result that indicates whether the code was successfully linted.
             """
             pass
+
         return lint_code
 
 
 class FormatCodeToolResult(ToolResult):
     error: Error | None = None
+
 
 class FormatCodeTool(Tool):
     name: str = "format_code"
@@ -457,17 +495,17 @@ class FormatCodeTool(Tool):
             return FormatCodeToolResult(
                 error=Error(
                     description="An unexpected error occurred while formatting code.",
-                    data=str(e)
+                    data=str(e),
                 )
-            )  
+            )
 
-    def get_schema(self) -> str|Callable:
+    def get_schema(self) -> str | Callable:
         def format_code(root_dir: str) -> FormatCodeToolResult:
             """
             Formats the source code to follow linting standards
 
             This tool can be used to try to automatically fix linting errors.
-            Some linting errors cannot be fixed by this tool and will require 
+            Some linting errors cannot be fixed by this tool and will require
             explicitly making code changes.
 
             Args:
@@ -476,4 +514,5 @@ class FormatCodeTool(Tool):
                 FormatCodeToolResult: Result that indicates whether the code was successfully formatted.
             """
             pass
+
         return format_code

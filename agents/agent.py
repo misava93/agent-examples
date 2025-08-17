@@ -1,23 +1,45 @@
-from abc import ABC, abstractmethod
-import logging
 import re
-from typing import List, Literal
+from abc import ABC, abstractmethod
+from typing import List, Any
 
-from ollama import ChatResponse
 import ollama
+from ollama import ChatResponse
 from pydantic import BaseModel
-from agents.tools import EditFileTool, Error, File, FindFilesTool, FormatCodeTool, GetTicketTool, LintCodeTool, ReadFileTool, SearchWebTool, TestCodeTool, Tool, ToolCall, ToolFunction
+
+from agents.tools import (
+    EditFileTool,
+    Error,
+    File,
+    FindFilesTool,
+    FormatCodeTool,
+    GetTicketTool,
+    LintCodeTool,
+    ReadFileTool,
+    SearchWebTool,
+    TestCodeTool,
+    Tool,
+    ToolCall,
+    ToolFunction,
+    SearchWebToolResult,
+    Ticket,
+)
+
 
 class LLMResponse(BaseModel):
     reasoning: str = ""
     tool_calls: List[ToolCall] = []
     confidence: float = 0.0
 
+
 class Context(BaseModel):
     num_iterations: int = 0
     errors: list[Error] = []
     last_llm_thought: str = ""
     tool_calls_history: list[ToolCall] = []
+    running_sub_agents: set[str] = set()
+    # Contains the response from each sub-agent.
+    sub_agent_responses: dict[str, dict[str, Any]] = {}
+
 
 class AgentConfig(BaseModel):
     name: str
@@ -29,9 +51,20 @@ class AgentConfig(BaseModel):
     # files that are not allowed to be edited or read
     disallowed_files: list[str] = []
 
+
 class AgentOutput(BaseModel):
-    context: Context
     error: Error | None = None
+
+
+class PlannerOutput(AgentOutput):
+    plan_file_path: str
+
+
+class ResearchOutput(AgentOutput):
+    ticket: Ticket
+    files: list[File]
+    web_search_results: list[SearchWebToolResult]
+
 
 def parse_llm_response(
     response: ChatResponse,
@@ -92,7 +125,7 @@ def parse_llm_response(
                 llm_response.tool_calls = llm_response_parsed.tool_calls
             if not llm_response.confidence or llm_response.confidence < 0.0:
                 llm_response.confidence = llm_response_parsed.confidence
-        
+
         return llm_response, error
 
 
@@ -101,7 +134,7 @@ class Agent(ABC, BaseModel):
     config: AgentConfig
     current_iteration: int = 0
     context: Context = Context()
-    
+
     @abstractmethod
     def is_done(self):
         pass
@@ -115,36 +148,17 @@ class Agent(ABC, BaseModel):
         pass
 
     @abstractmethod
-    def step(self) -> tuple[LLMResponse, Error | None]:
+    def step(self) -> tuple[LLMResponse | None, Error | None]:
         """
         Executes a single step of the agent.
 
         Returns:
-            tuple[LLMResponse, Error | None]: The LLM response and an error if the step failed.
+            tuple[LLMResponse | None, Error | None]: The LLM response and an error if the step failed.
         """
         pass
-    
-    def _update_common_context(self, response: LLMResponse, error: Error | None):
-        if error is not None:
-            # update context
-            self.context.errors.append(error)
-        else:
-            self.context.num_iterations += 1
-            self.context.last_llm_thought = response.reasoning
-            self.context.tool_calls_history.extend(response.tool_calls)
-        
-        self.context.num_iterations += 1
-        return response, error
-    
-    def start(self) -> AgentOutput:
-        while not self.is_done():
-            self.step()
-        return self.get_output()
-    
 
-    def _validate_llm_response(
-        self, context: Context, llm_response: LLMResponse
-    ) -> Error | None:
+    @abstractmethod
+    def validate_llm_response(self, llm_response: LLMResponse) -> Error | None:
         """
         Validates the LLM response
         Args:
@@ -154,10 +168,10 @@ class Agent(ABC, BaseModel):
             Error: The error if the response failed validation, None otherwise
         """
         # step 1: check that the LLM is not stuck repeating the same tool calls over and over again.
-        total_tool_calls = context.tool_calls_history + llm_response.tool_calls
+        total_tool_calls = self.context.tool_calls_history + llm_response.tool_calls
         if len(total_tool_calls) >= 3:
             n = 5
-            last_n_tool_calls = context.tool_calls_history[-n:]
+            last_n_tool_calls = total_tool_calls[-n:]
             # if all are equal
             are_all_equal = len(set(last_n_tool_calls)) == 1
             if are_all_equal:
@@ -168,22 +182,30 @@ class Agent(ABC, BaseModel):
                 return error
         # step 2: TODO: security checks (e.g. check against common security vulnerabilities, etc)
         # step 3: TODO: apply content moderation policies
-        # step 4:check to nudge LLM to use tools if needed
-        if not llm_response.tool_calls:
-            error = Error(
-                description="LLM decided to not use any tools, but the task has not been completed yet. Please use the available tools to complete the task.",
-            )
-            return error
         return None
+
+    def _update_common_context(self, response: LLMResponse, error: Error | None):
+        if error is not None:
+            # update context
+            self.context.errors.append(error)
+        else:
+            self.context.last_llm_thought = response.reasoning
+            self.context.tool_calls_history.extend(response.tool_calls)
+
+        self.context.num_iterations += 1
+        return response, error
+
+    def start(self) -> AgentOutput:
+        while not self.is_done():
+            self.step()
+        return self.get_output()
 
     def _invoke_llm(self, prompt: str) -> tuple[LLMResponse | None, Error | None]:
         try:
             response = ollama.chat(
                 self.config.model,
                 messages=[{"role": "user", "content": prompt}],
-                tools=[
-                    tool.get_schema() for tool in self.config.tools.values()
-                ],
+                tools=[tool.get_schema() for tool in self.config.tools.values()],
             )
             llm_response, error = parse_llm_response(response)
             if error is not None:
@@ -193,14 +215,14 @@ class Agent(ABC, BaseModel):
             print(f"Model: {self.config.model}")
             print(f"Agent name: {self.name}")
             print(f"Iteration {self.context.num_iterations}")
-            print(f"Prompt:\n{prompt}")
-            print(f"LLM Response Thinking:\n{llm_response.reasoning}")
-            print(f"LLM Response Tool Calls:\n{llm_response.tool_calls}")
-            print(f"LLM Response Confidence:\n{llm_response.confidence}")
+            print(f"Prompt:\n{prompt}\n")
+            print(f"LLM Response Thinking:\n{llm_response.reasoning}\n")
+            print(f"LLM Response Tool Calls:\n{llm_response.tool_calls}\n")
+            print(f"LLM Response Confidence:\n{llm_response.confidence}\n")
             print(f"Context:\n{self.context.model_dump_json(indent=2)}")
             print("----------------------------------------------")
 
-            error = self._validate_llm_response(self.context, llm_response)
+            error = self.validate_llm_response(llm_response)
             if error is not None:
                 return None, error
             tool_calls, error = self._process_tool_calls(llm_response)
@@ -216,8 +238,9 @@ class Agent(ABC, BaseModel):
             )
             return None, error
 
-    
-    def _process_tool_calls(self, response: LLMResponse) -> tuple[list[ToolCall], Error | None]:
+    def _process_tool_calls(
+        self, response: LLMResponse
+    ) -> tuple[list[ToolCall], Error | None]:
         from agents.researcher import ResearchAgentTool
         from agents.planner import PlannerAgentTool
         from agents.coder import CoderAgentTool
@@ -230,7 +253,9 @@ class Agent(ABC, BaseModel):
                 match tool_f.function.name:
                     case "get_ticket":
                         get_ticket = GetTicketTool()
-                        tool_call_result = get_ticket.run(ticket_id=tool_f.function.arguments["ticket_id"])
+                        tool_call_result = get_ticket.run(
+                            ticket_id=tool_f.function.arguments["ticket_id"]
+                        )
                         tool_call = ToolCall(
                             name=tool_f.function.name,
                             arguments=tool_f.function.arguments,
@@ -243,7 +268,9 @@ class Agent(ABC, BaseModel):
                         if "directory" in tool_f.function.arguments:
                             directory = tool_f.function.arguments["directory"]
                         allowed_dirs = [self.config.root_directory]
-                        tool_call_result = find_files.run(directory=directory, allowed_dirs=allowed_dirs)
+                        tool_call_result = find_files.run(
+                            directory=directory, allowed_dirs=allowed_dirs
+                        )
                         file_paths = tool_call_result.file_paths
                         tool_call = ToolCall(
                             name=tool_f.function.name,
@@ -253,7 +280,9 @@ class Agent(ABC, BaseModel):
                         tool_calls.append(tool_call)
                     case "read_file":
                         read_file = ReadFileTool()
-                        tool_call_result = read_file.run(file_path=tool_f.function.arguments["file_path"])
+                        tool_call_result = read_file.run(
+                            file_path=tool_f.function.arguments["file_path"]
+                        )
                         tool_call = ToolCall(
                             name=tool_f.function.name,
                             arguments=tool_f.function.arguments,
@@ -262,7 +291,9 @@ class Agent(ABC, BaseModel):
                         tool_calls.append(tool_call)
                     case "search_web":
                         search_web = SearchWebTool()
-                        tool_call_result = search_web.run(query=tool_f.function.arguments["query"])
+                        tool_call_result = search_web.run(
+                            query=tool_f.function.arguments["query"]
+                        )
                         tool_call = ToolCall(
                             name=tool_f.function.name,
                             arguments=tool_f.function.arguments,
@@ -271,7 +302,9 @@ class Agent(ABC, BaseModel):
                         tool_calls.append(tool_call)
                     case "edit_file":
                         read_file = ReadFileTool()
-                        tool_call_result = read_file.run(file_path=tool_f.function.arguments["file_path"])
+                        tool_call_result = read_file.run(
+                            file_path=tool_f.function.arguments["file_path"]
+                        )
                         current_file = File(
                             path=tool_f.function.arguments["file_path"],
                             content=tool_call_result.content,
@@ -329,10 +362,17 @@ class Agent(ABC, BaseModel):
                         )
                         tool_calls.append(tool_call)
                     case "researcher_agent":
+                        # make sure that only one agent is running at a time
+                        if "researcher_agent" in self.context.running_sub_agents:
+                            error = Error(
+                                description="Research agent is already running. Wait for it to finish.",
+                            )
+                            return [], error
+                        self.context.running_sub_agents.add("researcher_agent")
                         research_agent = ResearchAgentTool()
                         agent_config = self.config.model_copy()
                         # hack to restrict the tools to the ones that are needed for the research agent
-                        agent_config.tools={
+                        agent_config.tools = {
                             "get_ticket": GetTicketTool(),
                             "find_files": FindFilesTool(),
                             "read_file": ReadFileTool(),
@@ -345,26 +385,59 @@ class Agent(ABC, BaseModel):
                             response=agent_output.model_dump(),
                         )
                         tool_calls.append(tool_call)
+                        self.context.running_sub_agents.remove("researcher_agent")
+                        self.context.sub_agent_responses["researcher_agent"] = (
+                            agent_output.model_dump()
+                        )
                     case "planner_agent":
+                        # make sure that only one agent is running at a time
+                        if "planner_agent" in self.context.running_sub_agents:
+                            error = Error(
+                                description="Planner agent is already running. Wait for it to finish.",
+                            )
+                            return [], error
+                        self.context.running_sub_agents.add("planner_agent")
                         planner_agent = PlannerAgentTool()
                         agent_config = self.config.model_copy()
                         # hack to restrict the tools to the ones that are needed for the planner agent
-                        agent_config.tools={
+                        agent_config.tools = {
                             "read_file": ReadFileTool(),
                             "edit_file": EditFileTool(),
                         }
-                        agent_output = planner_agent.run(agent_config=agent_config)
+                        if "researcher_agent" not in self.context.sub_agent_responses:
+                            error = Error(
+                                description="Researcher agent must be called before calling planner_agent.",
+                            )
+                            return [], error
+                        researcher_output = self.context.sub_agent_responses[
+                            "researcher_agent"
+                        ]
+                        agent_output = planner_agent.run(
+                            agent_config=agent_config,
+                            researcher_output=ResearchOutput(**researcher_output),
+                        )
                         tool_call = ToolCall(
                             name=tool_f.function.name,
                             arguments=tool_f.function.arguments,
                             response=agent_output.model_dump(),
                         )
                         tool_calls.append(tool_call)
+                        self.context.running_sub_agents.remove("planner_agent")
+                        self.context.sub_agent_responses["planner_agent"] = (
+                            agent_output.model_dump()
+                        )
                     case "coder_agent":
+                        # make sure that only one agent is running at a time
+                        if "coder_agent" in self.context.running_sub_agents:
+                            error = Error(
+                                description="Coder agent is already running. Wait for it to finish.",
+                            )
+                            return [], error
+                        self.context.running_sub_agents.add("coder_agent")
                         coder_agent = CoderAgentTool()
                         agent_config = self.config.model_copy()
                         # hack to restrict the tools to the ones that are needed for the coder agent
-                        agent_config.tools={
+                        agent_config.tools = {
                             "find_files": FindFilesTool(),
                             "read_file": ReadFileTool(),
                             "edit_file": EditFileTool(),
@@ -372,13 +445,37 @@ class Agent(ABC, BaseModel):
                             "lint_code": LintCodeTool(),
                             "format_code": FormatCodeTool(),
                         }
-                        agent_output = coder_agent.run(agent_config=agent_config)
+                        if "planner_agent" not in self.context.sub_agent_responses:
+                            error = Error(
+                                description="Planner agent must be called before calling coder_agent.",
+                            )
+                            return [], error
+                        if "researcher_agent" not in self.context.sub_agent_responses:
+                            error = Error(
+                                description="Researcher agent must be called before calling coder_agent.",
+                            )
+                            return [], error
+                        planner_output = PlannerOutput(
+                            **self.context.sub_agent_responses["planner_agent"]
+                        )
+                        researcher_output = ResearchOutput(
+                            **self.context.sub_agent_responses["researcher_agent"]
+                        )
+                        agent_output = coder_agent.run(
+                            agent_config=agent_config,
+                            planner_output=planner_output,
+                            researcher_output=researcher_output,
+                        )
                         tool_call = ToolCall(
                             name=tool_f.function.name,
                             arguments=tool_f.function.arguments,
                             response=agent_output.model_dump(),
                         )
                         tool_calls.append(tool_call)
+                        self.context.running_sub_agents.remove("coder_agent")
+                        self.context.sub_agent_responses["coder_agent"] = (
+                            agent_output.model_dump()
+                        )
                     case _:
                         error = Error(
                             description="Unknown tool call.",
@@ -396,5 +493,5 @@ class Agent(ABC, BaseModel):
                     },
                 )
                 return [], error
-            
+
         return tool_calls, None
