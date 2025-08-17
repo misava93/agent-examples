@@ -14,19 +14,6 @@ This repository showcases practical examples of AI agents that can autonomously 
 - 🔧 **Validation**: Runs tests and linting to ensure fixes are correct
 - 🤖 **Local LLM Support**: Uses Ollama for running models locally
 
-## Project Structure
-
-```
-agent-examples/
-├── agents/
-│   ├── __init__.py
-│   └── ticket-bug-fixer.py    # Main bug fixing agent implementation
-├── main.py                     # Sample FastAPI application with intentional bug
-├── requirements.txt            # Python dependencies
-├── Makefile                    # Build and development commands
-└── prompt.txt                  # Instructions for agent tasks
-```
-
 ## Prerequisites
 
 - Python 3.10 or higher
